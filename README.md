@@ -66,7 +66,7 @@ python test.py --dataroot /root/NYU_RGBD_matfiles/ --name exp_name --netG bFT_re
 
 
 ## Pretrained checkpoints
-- Download the pretrained checkpoints [here](https://filebox.ece.vt.edu/~Badour/datasets/guided_pix2pix_checkpoints/pretrained.zip).
+- Download the pretrained checkpoints [here](https://filebox.ece.vt.edu/~Badour/guided_pix2pix_checkpoints/pretrained.zip).
 
 - Test: For example, to test the depth upsampling task with scale 16:
 
