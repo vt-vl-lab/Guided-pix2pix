@@ -12,8 +12,6 @@ This codebase was developed and tested with:
 - Pytorch 0.4.1.post2
 - CUDA 8.0
 
-## Installation
-
 ## Datasets
 - **Pose transfer:**  
 We use DeepFashion dataset. We follow the train/test splits provided by [Pose guided person image generation](https://github.com/charliememory/Pose-Guided-Person-Image-Generation). We provide the data in pickle format [here](https://filebox.ece.vt.edu/~Badour/datasets/DeepFashion.zip).
@@ -78,6 +76,7 @@ python test.py --dataroot /root/NYU_RGBD_matfiles/ --name depth_16 --netG bFT_re
 You can specify which epoch to evaluate by specifying ```--epoch``` or use the default which is the latest epoch. Results will be saved in ```--results_dir```.
 
 **1. Pose transfer:**  
+Please note that the inception score evaluation requires tensorflow. We evaluate with tensorflow 1.4.0.
 
 ```bash
 python evaluate.py --dataroot /root/DeepFashion/ --name pose --netG bFT_resnet --dataset_mode pose --input_nc 3 --guide_nc 18 --output_nc 3 --checkpoints_dir ./checkpoints/pretrained/ --task pose --results_dir ./pose_results
@@ -86,7 +85,7 @@ python evaluate.py --dataroot /root/DeepFashion/ --name pose --netG bFT_resnet -
 This will save the results in ```--results_dir``` and compute both SSIM and IS metrics.
 
 **2. Texture transfer:** 
- Please download the pretrained model of textureGAN in  ```./resources``` from [bags](https://s3-us-west-2.amazonaws.com/texturegan/textureD_final_allloss_handbag_3300.pth), [shoes](https://s3-us-west-2.amazonaws.com/texturegan/textureD_final_allloss_shoes_200.pth), and [clothes](https://s3-us-west-2.amazonaws.com/texturegan/final_cloth_finetune.pth). For example, to test the pretrained texture transfer model for the bags dataset:
+Please download the pretrained model of textureGAN in  ```./resources``` from [bags](https://s3-us-west-2.amazonaws.com/texturegan/textureD_final_allloss_handbag_3300.pth), [shoes](https://s3-us-west-2.amazonaws.com/texturegan/textureD_final_allloss_shoes_200.pth), and [clothes](https://s3-us-west-2.amazonaws.com/texturegan/final_cloth_finetune.pth). For example, to test the pretrained texture transfer model for the bags dataset:
 
 ```bash
 python evaluate.py --dataroot /root/training_handbags_pretrain/ --name texture_bags --netG bFT_unet --n_layers 7 --dataset_mode texture --input_nc 1 --guide_nc 4 --output_nc 3 --checkpoints_dir ./checkpoints/pretrained/ --task texture --results_dir ./texture_results
