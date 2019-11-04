@@ -102,4 +102,4 @@ This will save the results in ```--results_dir``` and compute their RMSE metric.
 
 
 ## Acknowledgments
-This code is heavily borrowed from [CycleGAN and pix2pix in PyTorch](https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix)
+This code is heavily borrowed from [CycleGAN and pix2pix in PyTorch](https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix). We thank [Shih-Yang Su](https://github.com/LemonATsu) for the code review.
