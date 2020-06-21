@@ -251,7 +251,7 @@ class PixelDiscriminator(nn.Module):
 
 
 ##############################################################################
-# Generators
+# bFT Generators
 ##############################################################################
 
 class bFT_Unet(nn.Module):
@@ -573,3 +573,275 @@ class bFT_Resnet(nn.Module):
         output = self.decoder(input)
         return output
 
+##############################################################################
+# uFT Generators
+##############################################################################
+class uFT_resnet(nn.Module):
+    def __init__(self, input_nc, guide_nc, output_nc, ngf=64, n_blocks=9, norm_layer=nn.BatchNorm2d,
+                 padding_type='reflect', bottleneck_depth=100):
+        super(uFT_resnet, self).__init__()
+        
+        self.activation = nn.ReLU(True)
+        
+        n_downsampling=3
+        
+        ## input
+        padding_in = [nn.ReflectionPad2d(3), nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0)]
+        self.padding_in = nn.Sequential(*padding_in)
+        self.conv1 = nn.Conv2d(ngf, ngf * 2, kernel_size=3, stride=2, padding=1)
+        self.conv2 = nn.Conv2d(ngf * 2, ngf * 4, kernel_size=3, stride=2, padding=1)
+        self.conv3 = nn.Conv2d(ngf * 4, ngf * 8, kernel_size=3, stride=2, padding=1)
+
+        ## guide
+        padding_g = [nn.ReflectionPad2d(3), nn.Conv2d(guide_nc, ngf, kernel_size=7, padding=0)]
+        self.padding_g = nn.Sequential(*padding_g)
+        self.conv1_g = nn.Conv2d(ngf, ngf * 2, kernel_size=3, stride=2, padding=1)
+        self.norm1_g = norm_layer(ngf * 1)
+        self.conv2_g = nn.Conv2d(ngf * 2, ngf * 4, kernel_size=3, stride=2, padding=1)
+        self.norm2_g = norm_layer(ngf * 2)
+        self.conv3_g = nn.Conv2d(ngf * 4, ngf * 8, kernel_size=3, stride=2, padding=1)
+        self.norm3_g = norm_layer(ngf * 4)
+        
+        # bottleneck1
+        self.bottleneck_alpha_1 = self.bottleneck_layer(ngf, bottleneck_depth)
+        self.bottleneck_beta_1 = self.bottleneck_layer(ngf, bottleneck_depth)
+        # bottleneck2
+        self.bottleneck_alpha_2 = self.bottleneck_layer(ngf*2, bottleneck_depth)
+        self.bottleneck_beta_2 = self.bottleneck_layer(ngf*2, bottleneck_depth)
+        # bottleneck3
+        self.bottleneck_alpha_3 = self.bottleneck_layer(ngf*4, bottleneck_depth)
+        self.bottleneck_beta_3 = self.bottleneck_layer(ngf*4, bottleneck_depth)
+        # bottleneck4
+        self.bottleneck_alpha_4 = self.bottleneck_layer(ngf*8, bottleneck_depth)
+        self.bottleneck_beta_4 = self.bottleneck_layer(ngf*8, bottleneck_depth)
+        
+        resnet = []
+        mult = 2**n_downsampling
+        for i in range(n_blocks):
+            resnet += [ResnetBlock(ngf * mult, padding_type=padding_type, activation=self.activation, norm_layer=norm_layer)]
+        self.resnet = nn.Sequential(*resnet)
+        decoder = []
+        for i in range(n_downsampling):
+            mult = 2**(n_downsampling - i)
+            decoder += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2), kernel_size=3, stride=2, padding=1, output_padding=1),
+                        norm_layer(int(ngf * mult / 2)), self.activation]
+        self.pre_decoder = nn.Sequential(*decoder)
+        self.decoder = nn.Sequential(*[nn.ReflectionPad2d(3), nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0), nn.Tanh()])
+
+    def bottleneck_layer(self, nc, bottleneck_depth):
+        return nn.Sequential(*[nn.Conv2d(nc, bottleneck_depth, kernel_size=1), self.activation, nn.Conv2d(bottleneck_depth, nc, kernel_size=1)])
+
+    def get_FiLM_param_(self, X, i):
+        x = X.clone()
+        # bottleneck
+        if (i==1):
+            alpha_layer = self.bottleneck_alpha_1
+            beta_layer = self.bottleneck_beta_1
+        elif (i==2):
+            alpha_layer = self.bottleneck_alpha_2
+            beta_layer = self.bottleneck_beta_2
+        elif (i==3):
+            alpha_layer = self.bottleneck_alpha_3
+            beta_layer = self.bottleneck_beta_3
+        elif (i==4):
+            alpha_layer = self.bottleneck_alpha_4
+            beta_layer = self.bottleneck_beta_4
+        alpha = alpha_layer(x)
+        beta = beta_layer(x)
+        return alpha, beta
+
+
+    def forward(self, input, guidance):
+        input = self.padding_in(input)
+        guidance = self.padding_g(guidance)
+        
+        alpha1, beta1 = self.get_FiLM_param_(guidance, 1)
+        input = affine_transformation(input, alpha1, beta1)
+        guidance = self.norm1_g(guidance)
+
+        input = self.activation(input)
+        guidance = self.activation(guidance)
+        
+        input = self.conv1(input)
+        guidance = self.conv1_g(guidance)
+
+        alpha2, beta2 = self.get_FiLM_param_(guidance, 2)
+        input = affine_transformation(input, alpha2, beta2)
+        guidance = self.norm2_g(guidance)
+
+        input = self.activation(input)
+        guidance = self.activation(guidance)
+
+        input = self.conv2(input)
+        guidance = self.conv2_g(guidance)
+
+        alpha3, beta3 = self.get_FiLM_param_(guidance, 3)
+        input = affine_transformation(input, alpha3, beta3)
+        guidance = self.norm3_g(guidance)
+
+        input = self.activation(input)
+        guidance = self.activation(guidance)
+
+        input = self.conv3(input)
+        guidance = self.conv3_g(guidance)
+
+        alpha4, beta4 = self.get_FiLM_param_(guidance, 4)
+        input = affine_transformation(input, alpha4, beta4)
+        
+        input = self.activation(input)
+        
+        input = self.resnet(input)
+        input =  self.pre_decoder(input)
+        output = self.decoder(input)
+        return output
+
+class uFT_Unet(nn.Module):
+    def __init__(self, input_nc, guide_nc, output_nc, num_downs, ngf=64, norm_layer=nn.BatchNorm2d, bottleneck_depth=100):
+        super(uFT_Unet, self).__init__()
+
+        self.num_downs = num_downs
+
+        if type(norm_layer) == functools.partial:
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+
+        self.downconv1 = nn.Sequential(*[nn.Conv2d(input_nc, ngf, kernel_size=4, stride=2, padding=1, bias=use_bias)])
+        self.downconv2 = nn.Sequential(*[nn.LeakyReLU(0.2, True), nn.Conv2d(ngf, ngf * 2, kernel_size=4, stride=2, padding=1, bias=use_bias)])
+        self.downconv3 = nn.Sequential(*[nn.LeakyReLU(0.2, True), nn.Conv2d(ngf * 2, ngf * 4, kernel_size=4, stride=2, padding=1, bias=use_bias)])
+        self.downconv4 = nn.Sequential(*[nn.LeakyReLU(0.2, True), nn.Conv2d(ngf * 4, ngf * 8, kernel_size=4, stride=2, padding=1, bias=use_bias)])
+
+        downconv = [] ## this has #(num_downs - 5) layers each with [relu-downconv-norm]
+        for i in range(num_downs - 5):
+            downconv += [nn.LeakyReLU(0.2, True), nn.Conv2d(ngf * 8, ngf * 8, kernel_size=4, stride=2, padding=1, bias=use_bias)]
+        self.downconv = nn.Sequential(*downconv)
+        self.downconv5 = nn.Sequential(*[nn.LeakyReLU(0.2, True), nn.Conv2d(ngf * 8, ngf * 8, kernel_size=4, stride=2, padding=1, bias=use_bias)])
+
+        ### bottleneck ------
+
+        self.upconv1 = nn.Sequential(*[nn.ReLU(True), nn.ConvTranspose2d(ngf * 8, ngf * 8, kernel_size=4, stride=2, padding=1, bias=use_bias), norm_layer(ngf * 8)])
+        upconv = [] ## this has #(num_downs - 5) layers each with [relu-upconv-norm]
+        for i in range(num_downs - 5):
+            upconv += [nn.ReLU(True), nn.ConvTranspose2d(ngf * 8 * 2, ngf * 8, kernel_size=4, stride=2, padding=1, bias=use_bias), norm_layer(ngf * 8)]
+        self.upconv = nn.Sequential(*upconv)
+        self.upconv2 = nn.Sequential(*[nn.ReLU(True), nn.ConvTranspose2d(ngf * 8 * 2, ngf * 4, kernel_size=4, stride=2, padding=1, bias=use_bias), norm_layer(ngf * 4)])
+        self.upconv3 = nn.Sequential(*[nn.ReLU(True), nn.ConvTranspose2d(ngf * 4 * 2, ngf * 2, kernel_size=4, stride=2, padding=1, bias=use_bias), norm_layer(ngf * 2)])
+        self.upconv4 = nn.Sequential(*[nn.ReLU(True), nn.ConvTranspose2d(ngf * 2 * 2, ngf, kernel_size=4, stride=2, padding=1, bias=use_bias), norm_layer(ngf)])
+        self.upconv5 = nn.Sequential(*[nn.ReLU(True), nn.ConvTranspose2d(ngf * 2, output_nc, kernel_size=4, stride=2, padding=1), nn.Tanh()])
+
+        ### guide downsampling
+        self.G_downconv1 = nn.Sequential(*[nn.Conv2d(guide_nc, ngf, kernel_size=4, stride=2, padding=1, bias=use_bias)])
+        self.G_downconv2 = nn.Sequential(*[nn.LeakyReLU(0.2, True), nn.Conv2d(ngf, ngf * 2, kernel_size=4, stride=2, padding=1, bias=use_bias)])
+        self.G_downconv3 = nn.Sequential(*[nn.LeakyReLU(0.2, True), nn.Conv2d(ngf * 2, ngf * 4, kernel_size=4, stride=2, padding=1, bias=use_bias)])
+        self.G_downconv4 = nn.Sequential(*[nn.LeakyReLU(0.2, True), nn.Conv2d(ngf * 4, ngf * 8, kernel_size=4, stride=2, padding=1, bias=use_bias)])
+        G_downconv = [] ## this has #(num_downs - 5) layers each with [relu-downconv-norm]
+        for i in range(num_downs - 5):
+            G_downconv += [nn.LeakyReLU(0.2, True), nn.Conv2d(ngf * 8, ngf * 8, kernel_size=4, stride=2, padding=1, bias=use_bias)]
+        self.G_downconv = nn.Sequential(*G_downconv)
+
+        ### bottlenecks for param generation
+        ### for guide
+        ### normalization
+        self.G_bottleneck_alpha_2 = nn.Sequential(*self.bottleneck_layer(ngf * 2, bottleneck_depth))
+        self.G_bottleneck_beta_2 = nn.Sequential(*self.bottleneck_layer(ngf * 2, bottleneck_depth))
+        self.norm2_g = norm_layer(ngf * 2)
+        self.G_bottleneck_alpha_3 = nn.Sequential(*self.bottleneck_layer(ngf * 4, bottleneck_depth))
+        self.G_bottleneck_beta_3 = nn.Sequential(*self.bottleneck_layer(ngf * 4, bottleneck_depth))
+        self.norm3_g = norm_layer(ngf * 4)
+        self.G_bottleneck_alpha_4 = nn.Sequential(*self.bottleneck_layer(ngf * 8, bottleneck_depth))
+        self.G_bottleneck_beta_4 = nn.Sequential(*self.bottleneck_layer(ngf * 8, bottleneck_depth))
+        self.norm4_g = norm_layer(ngf * 8)
+        G_bottleneck_alpha = []
+        G_bottleneck_beta = []
+        self.norm_g = norm_layer(ngf * 8)
+        for i in range(num_downs - 5):
+            G_bottleneck_alpha += self.bottleneck_layer(ngf * 8, bottleneck_depth)
+            G_bottleneck_beta += self.bottleneck_layer(ngf * 8, bottleneck_depth)
+        self.G_bottleneck_alpha = nn.Sequential(*G_bottleneck_alpha)
+        self.G_bottleneck_beta = nn.Sequential(*G_bottleneck_beta)
+        
+    def bottleneck_layer(self, nc, bottleneck_depth):   
+        return [nn.Conv2d(nc, bottleneck_depth, kernel_size=1), nn.ReLU(True), nn.Conv2d(bottleneck_depth, nc, kernel_size=1)]
+
+    # per pixel
+    def get_FiLM_param_(self, X, i):
+        x = X.clone()
+        # bottleneck
+        if (i=='2'):
+            alpha_layer = self.G_bottleneck_alpha_2
+            beta_layer = self.G_bottleneck_beta_2
+        elif (i=='3'):
+            alpha_layer = self.G_bottleneck_alpha_3
+            beta_layer = self.G_bottleneck_beta_3
+        elif (i=='4'): 
+            alpha_layer = self.G_bottleneck_alpha_4
+            beta_layer = self.G_bottleneck_beta_4
+        else: # a number i will ve given to specify which bottleneck to use
+            alpha_layer = self.G_bottleneck_alpha[i:i+3]
+            beta_layer = self.G_bottleneck_beta[i:i+3]
+            
+        alpha = alpha_layer(x)
+        beta = beta_layer(x)
+        return alpha, beta
+
+    def forward (self, input, guide):
+        ## downconv
+        down1 = self.downconv1(input)
+        G_down1 = self.G_downconv1(guide)
+        
+        down2 = self.downconv2(down1)
+        G_down2 = self.G_downconv2(G_down1)
+
+        g_alpha2, g_beta2 = self.get_FiLM_param_(G_down2, '2')
+        down2 = affine_transformation(down2, g_alpha2, g_beta2)
+        G_down2 = self.norm2_g(G_down2)
+        
+        down3 = self.downconv3(down2)
+        G_down3 = self.G_downconv3(G_down2)
+
+        g_alpha3, g_beta3 = self.get_FiLM_param_(G_down3, '3')
+        down3 = affine_transformation(down3, g_alpha3, g_beta3)
+        G_down3 = self.norm3_g(G_down3)
+
+        down4 = self.downconv4(down3)
+        G_down4 = self.G_downconv4(G_down3)
+
+        g_alpha4, g_beta4 = self.get_FiLM_param_(G_down4, '4')
+        down4 = affine_transformation(down4, g_alpha4, g_beta4) 
+        G_down4 = self.norm4_g(G_down4)
+        
+        ## (num_downs - 5) layers
+        down = []
+        G_down = []
+        for i in range(self.num_downs - 5):
+            layer = 2 * i
+            bottleneck_layer = 3 * i
+            downconv = self.downconv[layer:layer+2]
+            G_downconv = self.G_downconv[layer:layer+2]
+            if (layer == 0):
+                down += [downconv(down4)]
+                G_down += [G_downconv(G_down4)]
+            else:
+                down += [downconv(down[i-1])]
+                G_down += [G_downconv(G_down[i-1])]
+
+            g_alpha, g_beta = self.get_FiLM_param_(G_down[i], bottleneck_layer)
+            down[i] = affine_transformation(down[i], g_alpha, g_beta) 
+            G_down[i] = self.norm_g(G_down[i])
+
+        down5 = self.downconv5(down[-1])
+
+        ## concat and upconv
+        up = self.upconv1(down5)
+        num_down = self.num_downs - 5
+        for i in range(self.num_downs - 5):
+            layer = 3 * i
+            upconv = self.upconv[layer:layer+3]
+            num_down -= 1
+            up = upconv(torch.cat([down[num_down], up], 1))
+        up = self.upconv2(torch.cat([down4,up],1))
+        up = self.upconv3(torch.cat([down3,up],1))
+        up = self.upconv4(torch.cat([down2,up],1))
+        up = self.upconv5(torch.cat([down1,up],1))
+
+        return up
